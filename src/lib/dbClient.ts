@@ -389,6 +389,63 @@ export const dbClient = {
     return nuevoColegio;
   },
 
+  updateColegio: (id: string, nombre: string, docenteId: string | null, metadata: Partial<Colegio['metadata']>): Colegio => {
+    if (!nombre.trim()) {
+      const err = 'El nombre del colegio no puede estar vacío';
+      logSystemError('SQL_CONSTRAINT_FAIL', err);
+      throw new Error(err);
+    }
+    const colegios = dbClient.getColegios();
+    const idx = colegios.findIndex(c => c.id === id);
+    if (idx === -1) {
+      const err = `El colegio con id '${id}' no existe`;
+      logSystemError('SQL_NOT_FOUND', err);
+      throw new Error(err);
+    }
+    colegios[idx] = {
+      ...colegios[idx],
+      nombre: nombre.trim(),
+      docente_id: docenteId,
+      metadata: {
+        ...colegios[idx].metadata,
+        ...metadata
+      }
+    };
+    localStorage.setItem('db_colegios', JSON.stringify(colegios));
+    return colegios[idx];
+  },
+
+  deleteColegio: (id: string): void => {
+    const colegios = dbClient.getColegios();
+    const filtered = colegios.filter(c => c.id !== id);
+    if (filtered.length === colegios.length) {
+      const err = `El colegio con id '${id}' no existe`;
+      logSystemError('SQL_NOT_FOUND', err);
+      throw new Error(err);
+    }
+    localStorage.setItem('db_colegios', JSON.stringify(filtered));
+
+    // Delete groups of this school
+    const grupos = dbClient.getGrupos();
+    const gruposDelColegio = grupos.filter(g => g.colegio_id === id);
+    const gruposRestantes = grupos.filter(g => g.colegio_id !== id);
+    localStorage.setItem('db_grupos', JSON.stringify(gruposRestantes));
+
+    // Set group_id to null for students in the deleted groups
+    const usuarios = dbClient.getUsuarios();
+    let usuariosModificados = false;
+    const nuevosUsuarios = usuarios.map(u => {
+      if (u.rol === 'estudiante' && u.grupo_id && gruposDelColegio.some(g => g.id === u.grupo_id)) {
+        usuariosModificados = true;
+        return { ...u, grupo_id: null };
+      }
+      return u;
+    });
+    if (usuariosModificados) {
+      localStorage.setItem('db_usuarios', JSON.stringify(nuevosUsuarios));
+    }
+  },
+
   // ----------------------------------------------------
   // GRUPOS CRUD
   // ----------------------------------------------------
@@ -535,6 +592,24 @@ export const dbClient = {
     usuarios[usuarioIdx] = usuario;
     localStorage.setItem('db_usuarios', JSON.stringify(usuarios));
     return usuario;
+  },
+
+  updateUsuarioNombre: (usuarioId: string, nombreCompleto: string): Usuario => {
+    if (!nombreCompleto.trim()) {
+      const err = 'El nombre completo no puede estar vacío';
+      logSystemError('SQL_CONSTRAINT_FAIL', err);
+      throw new Error(err);
+    }
+    const usuarios = dbClient.getUsuarios();
+    const idx = usuarios.findIndex(u => u.id === usuarioId);
+    if (idx === -1) {
+      const err = `El usuario con id '${usuarioId}' no existe`;
+      logSystemError('SQL_NOT_FOUND', err);
+      throw new Error(err);
+    }
+    usuarios[idx].nombre_completo = nombreCompleto.trim();
+    localStorage.setItem('db_usuarios', JSON.stringify(usuarios));
+    return usuarios[idx];
   },
 
   incrementarLogin: (usuarioId: string): void => {
@@ -804,5 +879,56 @@ export const dbClient = {
       console.error('Error in initializeAsync:', e);
       dbClient.initialize(forceReset);
     }
+  },
+
+  exportBackup: (): string => {
+    const backupObj: Record<string, any> = {};
+    const keys = [
+      'db_colegios',
+      'db_grupos',
+      'db_usuarios',
+      'db_preguntas',
+      'db_simulacros',
+      'db_resultados',
+      'db_bitacora_errores',
+      'db_initialized',
+      'db_exam_config'
+    ];
+    keys.forEach(key => {
+      const val = localStorage.getItem(key);
+      if (val !== null) {
+        try {
+          backupObj[key] = JSON.parse(val);
+        } catch {
+          backupObj[key] = val;
+        }
+      }
+    });
+    return JSON.stringify(backupObj, null, 2);
+  },
+
+  importBackup: async (backupJson: string): Promise<void> => {
+    const backupObj = JSON.parse(backupJson);
+    if (!backupObj || typeof backupObj !== 'object') {
+      throw new Error('El archivo de respaldo no tiene un formato válido.');
+    }
+
+    const requiredKeys = ['db_usuarios', 'db_colegios', 'db_grupos'];
+    const hasKeys = requiredKeys.every(k => k in backupObj);
+    if (!hasKeys) {
+      throw new Error('El archivo no contiene información básica válida del sistema (colegios, grupos, usuarios).');
+    }
+
+    Object.keys(backupObj).forEach(key => {
+      const val = backupObj[key];
+      if (typeof val === 'string') {
+        localStorage.setItem(key, val);
+      } else {
+        localStorage.setItem(key, JSON.stringify(val));
+      }
+    });
+
+    localStorage.setItem('db_initialized', 'true');
+    await dbClient.syncToIndexedDb();
   }
 };
