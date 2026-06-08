@@ -19,7 +19,9 @@ import {
   HelpCircle,
   Mail,
   Download,
-  Upload
+  Upload,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
 interface AdminDashboardViewProps {
@@ -89,6 +91,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
   const [studentExcelPreviewRows, setStudentExcelPreviewRows] = useState<any[]>([]);
   const [showStudentExcelPreviewModal, setShowStudentExcelPreviewModal] = useState(false);
 
+  // Edit Colegio States
+  const [editingColegio, setEditingColegio] = useState<Colegio | null>(null);
+  const [editColegioNombre, setEditColegioNombre] = useState('');
+  const [editColegioDocenteId, setEditColegioDocenteId] = useState('');
+  const [editColegioNit, setEditColegioNit] = useState('');
+  const [editColegioDireccion, setEditColegioDireccion] = useState('');
+  const [editColegioTelefono, setEditColegioTelefono] = useState('');
+
+  // Edit Student/User States
+  const [editingStudent, setEditingStudent] = useState<Usuario | null>(null);
+  const [editStudentNombreCompleto, setEditStudentNombreCompleto] = useState('');
+
   // Tab & Sub-tab controls (Nuevo)
   const [userSubTab, setUserSubTab] = useState<'activos' | 'bajas'>('activos');
   const [bitacoraSubTab, setBitacoraSubTab] = useState<'errores' | 'accesos'>('errores');
@@ -120,7 +134,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
 
   // Redirigir docentes si intentan acceder a pestañas no autorizadas
   useEffect(() => {
-    if (isDocente && (activeTab === 'usuarios' || activeTab === 'motor' || activeTab === 'bitacora')) {
+    if (isDocente && (activeTab === 'colegios' || activeTab === 'usuarios' || activeTab === 'bitacora')) {
       setActiveTab('dashboard');
     }
   }, [activeTab, isDocente]);
@@ -210,6 +224,17 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
     }
   ];
 
+  const visibleTourSteps = adminTourSteps.filter(step => {
+    if (isDocente) {
+      const restrictedIds = [
+        'tour-admin-tab-colegios',
+        'tour-admin-tab-usuarios'
+      ];
+      return !restrictedIds.includes(step.targetId);
+    }
+    return true;
+  });
+
   // Load all data from DB
   const loadData = () => {
     try {
@@ -246,6 +271,78 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
   const triggerError = (msg: string) => {
     setErrorMsg(msg);
     setTimeout(() => setErrorMsg(null), 4000);
+  };
+
+  const handleStartEditColegio = (col: Colegio) => {
+    setEditingColegio(col);
+    setEditColegioNombre(col.nombre);
+    setEditColegioDocenteId(col.docente_id || '');
+    setEditColegioNit(col.metadata.nit || '');
+    setEditColegioDireccion(col.metadata.direccion || '');
+    setEditColegioTelefono(col.metadata.telefono || '');
+  };
+
+  const handleSaveEditColegio = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingColegio) return;
+    try {
+      dbClient.updateColegio(editingColegio.id, editColegioNombre, editColegioDocenteId || null, {
+        nit: editColegioNit,
+        direccion: editColegioDireccion,
+        telefono: editColegioTelefono
+      });
+      dbClient.syncToIndexedDb().catch(e => console.error('IndexedDB sync failed:', e));
+      triggerSuccess('Colegio actualizado con éxito.');
+      setEditingColegio(null);
+      loadData();
+    } catch (err: any) {
+      triggerError(`Error al actualizar el colegio: ${err.message}`);
+    }
+  };
+
+  const handleStartEditStudent = (student: Usuario) => {
+    setEditingStudent(student);
+    setEditStudentNombreCompleto(student.nombre_completo || '');
+  };
+
+  const handleSaveEditStudent = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudent) return;
+    try {
+      dbClient.updateUsuarioNombre(editingStudent.id, editStudentNombreCompleto);
+      dbClient.syncToIndexedDb().catch(err => console.error('IndexedDB sync failed:', err));
+      triggerSuccess('Nombre del usuario actualizado con éxito.');
+      setEditingStudent(null);
+      loadData();
+    } catch (err: any) {
+      triggerError(`Error al actualizar el nombre: ${err.message}`);
+    }
+  };
+
+  const handleDeleteColegio = (id: string, nombre: string) => {
+    if (window.confirm(`¿Está seguro de eliminar el colegio "${nombre}"? Esta acción eliminará también sus grupos asociados y desvinculará a sus estudiantes.`)) {
+      try {
+        dbClient.deleteColegio(id);
+        dbClient.syncToIndexedDb().catch(e => console.error('IndexedDB sync failed:', e));
+        triggerSuccess('Colegio eliminado con éxito.');
+        loadData();
+      } catch (err: any) {
+        triggerError(`Error al eliminar el colegio: ${err.message}`);
+      }
+    }
+  };
+
+  const handleAssignTeacherInline = (colId: string, docenteId: string) => {
+    try {
+      const col = colegios.find(c => c.id === colId);
+      if (!col) return;
+      dbClient.updateColegio(colId, col.nombre, docenteId || null, col.metadata);
+      dbClient.syncToIndexedDb().catch(e => console.error('IndexedDB sync failed:', e));
+      triggerSuccess('Docente asignado con éxito.');
+      loadData();
+    } catch (err: any) {
+      triggerError(`Error al asignar el docente: ${err.message}`);
+    }
   };
 
   // ----------------------------------------------------
@@ -679,6 +776,71 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
     }
   };
 
+  const handleExportStudentActivityExcel = () => {
+    try {
+      const headers = [
+        "Nombre Completo",
+        "Correo Alias",
+        "Colegio",
+        "Grupo",
+        "Accesos",
+        "Exámenes Terminados",
+        "Exámenes en Progreso",
+        "Último Acceso",
+        "Estado"
+      ];
+
+      const data = visibleEstudiantes.map(est => {
+        const studentGroup = grupos.find(g => g.id === est.grupo_id);
+        const studentColegio = studentGroup ? colegios.find(c => c.id === studentGroup.colegio_id) : null;
+        
+        const completedExams = visibleSimulacros.filter(s => s.estudiante_id === est.id && s.estado === 'terminado').length;
+        const inProgressExams = visibleSimulacros.filter(s => s.estudiante_id === est.id && s.estado === 'en_progreso').length;
+        const isOnline = est.last_active_at && (Date.now() - new Date(est.last_active_at).getTime() < 300000);
+
+        let estadoStr = 'Activo';
+        if (est.estado === 'baja') {
+          estadoStr = 'De Baja';
+        } else if (isOnline) {
+          estadoStr = 'En Línea';
+        }
+
+        return {
+          "Nombre Completo": est.nombre_completo || est.email.split('@')[0],
+          "Correo Alias": est.email,
+          "Colegio": studentColegio ? studentColegio.nombre : 'Sin Asignar',
+          "Grupo": studentGroup ? studentGroup.nombre_grupo : 'Sin Asignar',
+          "Accesos": est.login_count || 0,
+          "Exámenes Terminados": completedExams,
+          "Exámenes en Progreso": inProgressExams,
+          "Último Acceso": est.last_active_at ? new Date(est.last_active_at).toLocaleString() : 'Nunca',
+          "Estado": estadoStr
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(data, { header: headers });
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Reporte Actividades");
+      
+      // Auto-size columns
+      const maxLens = headers.map(header => header.length);
+      data.forEach(row => {
+        headers.forEach((header, i) => {
+          const val = row[header as keyof typeof row]?.toString() || '';
+          if (val.length > maxLens[i]) {
+            maxLens[i] = val.length;
+          }
+        });
+      });
+      worksheet['!cols'] = maxLens.map(len => ({ wch: len + 3 }));
+
+      XLSX.writeFile(workbook, "Reporte_Actividad_Alumnos_SaberPRO.xlsx");
+      triggerSuccess('Reporte de actividad de alumnos exportado con éxito.');
+    } catch (err: any) {
+      triggerError(`Error al exportar el reporte de alumnos: ${err.message}`);
+    }
+  };
+
   const processStudentExcelFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -858,6 +1020,85 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
     }
   };
 
+  const handleExportDatabaseJSON = () => {
+    try {
+      const dataStr = dbClient.exportBackup();
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Respaldo_SaberPRO_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      triggerSuccess('Copia de seguridad descargada con éxito.');
+    } catch (err: any) {
+      triggerError(`Error al exportar base de datos: ${err.message}`);
+    }
+  };
+
+  const handleImportDatabaseJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!window.confirm('¿Está seguro de restaurar esta copia de seguridad? Esta acción reemplazará TODOS los datos actuales del sistema.')) {
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const text = evt.target?.result as string;
+        await dbClient.importBackup(text);
+        triggerSuccess('¡Copia de seguridad restaurada con éxito!');
+        loadData();
+      } catch (err: any) {
+        triggerError(`Error al restaurar: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // Reset input
+  };
+
+  const handleExportBitacoraExcel = () => {
+    try {
+      if (bitacoraSubTab === 'errores') {
+        const headers = ['Timestamp', 'Código Error', 'Descripción', 'Usuario ID'];
+        const data = bitacora.map(err => ({
+          'Timestamp': new Date(err.timestamp).toLocaleString(),
+          'Código Error': err.codigo_error,
+          'Descripción': err.descripcion,
+          'Usuario ID': err.usuario_id || 'N/A'
+        }));
+        const worksheet = XLSX.utils.json_to_sheet(data, { header: headers });
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Errores Técnicos');
+        XLSX.writeFile(workbook, `Reporte_Errores_SaberPRO_${new Date().toISOString().split('T')[0]}.xlsx`);
+      } else {
+        const headers = ['Docente', 'Correo Electrónico', 'Cantidad de Accesos', 'Última Actividad'];
+        const docentesList = usuarios.filter(u => u.rol === 'docente');
+        const data = docentesList.map(doc => {
+          const isOnline = doc.last_active_at && (Date.now() - new Date(doc.last_active_at).getTime() < 300000);
+          return {
+            'Docente': doc.nombre_completo || 'Docente',
+            'Correo Electrónico': doc.email,
+            'Cantidad de Accesos': doc.login_count || 0,
+            'Última Actividad': isOnline ? 'En Línea' : (doc.last_active_at ? new Date(doc.last_active_at).toLocaleString() : 'Nunca')
+          };
+        });
+        const worksheet = XLSX.utils.json_to_sheet(data, { header: headers });
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Accesos Docentes');
+        XLSX.writeFile(workbook, `Reporte_Accesos_Docentes_SaberPRO_${new Date().toISOString().split('T')[0]}.xlsx`);
+      }
+      triggerSuccess('Reporte de bitácora descargado con éxito.');
+    } catch (err: any) {
+      triggerError(`Error al descargar bitácora: ${err.message}`);
+    }
+  };
+
   // Filter students who are not assigned to any group/school (grupo_id === null)
   const unassignedStudents = usuarios.filter(u => u.rol === 'estudiante' && !u.grupo_id);
 
@@ -945,12 +1186,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
                 Panel de Control
               </a>
             </li>
-            <li className={`sidebar-item ${activeTab === 'colegios' ? 'active' : ''}`} id="tour-admin-tab-colegios">
-              <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('colegios'); loadData(); }}>
-                <School size={18} />
-                Colegios y Grupos
-              </a>
-            </li>
+            {!isDocente && (
+              <li className={`sidebar-item ${activeTab === 'colegios' ? 'active' : ''}`} id="tour-admin-tab-colegios">
+                <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('colegios'); loadData(); }}>
+                  <School size={18} />
+                  Colegios y Grupos
+                </a>
+              </li>
+            )}
             {currentUser.rol === 'admin' && (
               <li className={`sidebar-item ${activeTab === 'usuarios' ? 'active' : ''}`} id="tour-admin-tab-usuarios">
                 <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('usuarios'); loadData(); }}>
@@ -959,7 +1202,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
                 </a>
               </li>
             )}
-            {currentUser.rol === 'admin' && (
+            {(currentUser.rol === 'admin' || currentUser.rol === 'docente') && (
               <li className={`sidebar-item ${activeTab === 'motor' ? 'active' : ''}`} id="tour-admin-tab-motor">
                 <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('motor'); loadData(); }}>
                   <Settings size={18} />
@@ -1091,16 +1334,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
                 <span className="welcome-preheading">MATRÍCULA GLOBAL Y GESTIÓN</span>
                 <h1 className="welcome-heading">SIMULACROS ILIMITADOS</h1>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.25rem', maxWidth: '450px' }}>
-                  ¡Bienvenido de nuevo, Admin! Aquí tienes los indicadores generales de registro escolar y rendimiento de simulacros ICFES Saber 11 en tiempo real.
+                  ¡Bienvenido de nuevo, {isDocente ? 'Docente' : 'Admin'}! Aquí tienes los indicadores generales de registro escolar y rendimiento de simulacros ICFES Saber 11 en tiempo real.
                 </p>
-                <div>
-                  <button 
-                    onClick={() => setActiveTab('colegios')} 
-                    className="btn btn-primary"
-                  >
-                    Registrar Colegio
-                  </button>
-                </div>
+                {!isDocente && (
+                  <div>
+                    <button 
+                      onClick={() => setActiveTab('colegios')} 
+                      className="btn btn-primary"
+                    >
+                      Registrar Colegio
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* 3D SVG Bar Chart & Swooping Orange Arrow Illustration */}
@@ -1354,15 +1599,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                {!isDocente ? (
-                  <button onClick={() => setActiveTab('motor')} className="btn btn-primary">
-                    Explorar Configuración
-                  </button>
-                ) : (
-                  <button onClick={() => setActiveTab('colegios')} className="btn btn-primary">
-                    Ver Mis Colegios
-                  </button>
-                )}
+                <button onClick={() => setActiveTab('motor')} className="btn btn-primary">
+                  Explorar Configuración
+                </button>
                 {/* Visual Arrow decoration */}
                 <div className="hide-mobile">
                   <svg width="60" height="30" viewBox="0 0 60 30" fill="none">
@@ -1375,10 +1614,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
 
             {/* Student Activity Summary (Nuevo) */}
             <div className="card" style={{ marginBottom: '1.5rem' }}>
-              <h3 className="card-title">
-                <Users size={20} style={{ color: 'var(--color-primary)' }} />
-                Monitoreo y Actividad de Alumnos
-              </h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                <h3 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Users size={20} style={{ color: 'var(--color-primary)' }} />
+                  Monitoreo y Actividad de Alumnos
+                </h3>
+                <button 
+                  onClick={handleExportStudentActivityExcel} 
+                  className="btn btn-secondary btn-sm"
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  disabled={visibleEstudiantes.length === 0}
+                >
+                  <Download size={14} />
+                  Descargar Reporte Excel
+                </button>
+              </div>
               {visibleEstudiantes.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>
                   No hay estudiantes registrados o visibles en tus grupos.
@@ -1409,9 +1659,28 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
                         return (
                           <tr key={est.id}>
                             <td>
-                              <div>
-                                <strong style={{ color: 'var(--text-title)' }}>{est.nombre_completo || est.email.split('@')[0]}</strong>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{est.email}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div>
+                                  <strong style={{ color: 'var(--text-title)' }}>{est.nombre_completo || est.email.split('@')[0]}</strong>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{est.email}</div>
+                                </div>
+                                <button
+                                  onClick={() => handleStartEditStudent(est)}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: '0.25rem',
+                                    color: 'var(--color-primary)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    borderRadius: '50%',
+                                    transition: 'background-color 0.2s'
+                                  }}
+                                  title="Editar Nombre del Alumno"
+                                >
+                                  <Edit size={14} />
+                                </button>
                               </div>
                             </td>
                             <td>
@@ -1688,15 +1957,55 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
                               <span><strong>Teléfono:</strong> {col.metadata.telefono || 'No Registrado'}</span>
                               <span>
                                 <strong>Docente Asignado:</strong>{' '}
-                                <span style={{ color: assignedTeacher ? 'var(--text-title)' : 'var(--color-error)', fontWeight: 700 }}>
-                                  {assignedTeacher ? `${assignedTeacher.nombre_completo || assignedTeacher.email} (${assignedTeacher.email})` : 'Ninguno'}
-                                </span>
+                                {currentUser.rol === 'admin' ? (
+                                  <select
+                                    className="form-control"
+                                    style={{ display: 'inline-block', width: 'auto', padding: '0.15rem 0.5rem', fontSize: '0.775rem', height: 'auto', marginLeft: '0.35rem', borderRadius: '4px' }}
+                                    value={col.docente_id || ''}
+                                    onChange={(e) => handleAssignTeacherInline(col.id, e.target.value)}
+                                  >
+                                    <option value="">-- Sin Asignar --</option>
+                                    {usuarios.filter(u => u.rol === 'docente' && u.estado !== 'baja').map((doc) => (
+                                      <option key={doc.id} value={doc.id}>
+                                        {doc.nombre_completo || doc.email}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span style={{ color: assignedTeacher ? 'var(--text-title)' : 'var(--color-error)', fontWeight: 700 }}>
+                                    {assignedTeacher ? `${assignedTeacher.nombre_completo || assignedTeacher.email} (${assignedTeacher.email})` : 'Ninguno'}
+                                  </span>
+                                )}
                               </span>
                             </div>
                           </div>
-                          <span className="badge badge-primary">
-                            {gruposDelColegio.length} Grupos
-                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+                            <span className="badge badge-primary">
+                              {gruposDelColegio.length} Grupos
+                            </span>
+                            {currentUser.rol === 'admin' && (
+                              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                <button 
+                                  onClick={() => handleStartEditColegio(col)} 
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.25rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem' }}
+                                  title="Editar Colegio"
+                                >
+                                  <Edit size={12} />
+                                  Editar
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteColegio(col.id, col.nombre)} 
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ padding: '0.25rem 0.5rem', display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--color-error)', borderColor: 'var(--bg-error-alert)' }}
+                                  title="Eliminar Colegio"
+                                >
+                                  <Trash2 size={12} />
+                                  Eliminar
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Grupos Inline Area */}
@@ -2191,9 +2500,28 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
                         return (
                           <tr key={u.id}>
                             <td>
-                              <div>
-                                <strong style={{ color: 'var(--text-title)' }}>{u.nombre_completo || u.email.split('@')[0]}</strong>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <div>
+                                  <strong style={{ color: 'var(--text-title)' }}>{u.nombre_completo || u.email.split('@')[0]}</strong>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                                </div>
+                                <button
+                                  onClick={() => handleStartEditStudent(u)}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: '0.25rem',
+                                    color: 'var(--color-primary)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    borderRadius: '50%',
+                                    transition: 'background-color 0.2s'
+                                  }}
+                                  title="Editar Nombre de Usuario"
+                                >
+                                  <Edit size={14} />
+                                </button>
                               </div>
                             </td>
                             <td>
@@ -2417,6 +2745,52 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
               )}
             </div>
 
+            {/* Copia de Seguridad y Respaldo (Solo para Admin) */}
+            <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <h3 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Settings size={20} style={{ color: 'var(--color-primary)' }} />
+                Copia de Seguridad y Respaldo del Sistema
+              </h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', margin: 0 }}>
+                Descarga una copia completa de toda la información de la base de datos (colegios, grupos, alumnos, docentes, configuraciones y reportes de exámenes) en formato JSON. Si borras el caché del navegador, puedes cargar este archivo de respaldo para restaurar todo el estado anterior.
+              </p>
+              
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button 
+                  onClick={handleExportDatabaseJSON}
+                  className="btn btn-primary btn-sm"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                >
+                  <Download size={14} />
+                  Descargar Copia de Seguridad (JSON)
+                </button>
+
+                <div style={{ position: 'relative', display: 'inline-block' }}>
+                  <button 
+                    className="btn btn-secondary btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    <Upload size={14} />
+                    Cargar Copia de Seguridad (JSON)
+                  </button>
+                  <input 
+                    type="file" 
+                    accept=".json"
+                    onChange={handleImportDatabaseJSON}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: '100%',
+                      opacity: 0,
+                      cursor: 'pointer'
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Sub-tab Toggle */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
               <button 
@@ -2437,7 +2811,18 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
 
             {bitacoraSubTab === 'errores' ? (
               <div className="card">
-                <h3 className="card-title">Registro de Errores Técnicos</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                  <h3 className="card-title" style={{ margin: 0 }}>Registro de Errores Técnicos</h3>
+                  <button 
+                    onClick={handleExportBitacoraExcel} 
+                    className="btn btn-secondary btn-sm"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    disabled={bitacora.length === 0}
+                  >
+                    <Download size={14} />
+                    Descargar Reporte Excel
+                  </button>
+                </div>
                 {bitacora.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
                     <CheckCircle size={40} style={{ color: 'var(--color-success)', marginBottom: '1rem' }} />
@@ -2477,10 +2862,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
               </div>
             ) : (
               <div className="card">
-                <h3 className="card-title">Bitácora de Accesos de Docentes</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '-0.75rem', marginBottom: '1.25rem' }}>
-                  Lista de docentes registrados y cantidad de veces que han iniciado sesión.
-                </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                  <div>
+                    <h3 className="card-title" style={{ margin: 0 }}>Bitácora de Accesos de Docentes</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0.25rem 0 0 0' }}>
+                      Lista de docentes registrados y cantidad de veces que han iniciado sesión.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={handleExportBitacoraExcel} 
+                    className="btn btn-secondary btn-sm"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    disabled={usuarios.filter(u => u.rol === 'docente').length === 0}
+                  >
+                    <Download size={14} />
+                    Descargar Reporte Excel
+                  </button>
+                </div>
                 {usuarios.filter(u => u.rol === 'docente').length === 0 ? (
                   <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>
                     No hay docentes dados de alta en el sistema.
@@ -2898,9 +3296,155 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({ currentU
         </div>
       )}
 
+      {/* Modal: Editar Colegio */}
+      {editingColegio && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="modal-content" style={{ maxWidth: '500px', width: '90%' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0 }}>Editar Colegio: {editingColegio.nombre}</h3>
+              <button 
+                onClick={() => setEditingColegio(null)} 
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-muted)' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditColegio} style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div className="form-group">
+                <label className="form-label">Nombre del Colegio *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editColegioNombre}
+                  onChange={(e) => setEditColegioNombre(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Docente Asignado</label>
+                <select
+                  className="form-control"
+                  value={editColegioDocenteId}
+                  onChange={(e) => setEditColegioDocenteId(e.target.value)}
+                >
+                  <option value="">-- Sin Asignar --</option>
+                  {usuarios.filter(u => u.rol === 'docente' && u.estado !== 'baja').map((doc) => (
+                    <option key={doc.id} value={doc.id}>
+                      {doc.nombre_completo || doc.email} ({doc.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">NIT (Opcional)</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editColegioNit}
+                  onChange={(e) => setEditColegioNit(e.target.value)}
+                  placeholder="Ej: 900.123.456-7"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Dirección</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editColegioDireccion}
+                  onChange={(e) => setEditColegioDireccion(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Teléfono</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editColegioTelefono}
+                  onChange={(e) => setEditColegioTelefono(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setEditingColegio(null)} 
+                  className="btn btn-secondary"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                >
+                  Guardar Cambios
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Editar Perfil de Alumno / Usuario */}
+      {editingStudent && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="modal-content" style={{ maxWidth: '400px', width: '90%' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0 }}>Editar Nombre de Usuario</h3>
+              <button 
+                onClick={() => setEditingStudent(null)} 
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-muted)' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditStudent} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ backgroundColor: 'var(--bg-app)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', border: '1px solid var(--border-color)' }}>
+                <strong>Usuario:</strong> {editingStudent.email}<br />
+                <strong>Rol:</strong> {editingStudent.rol}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Nombre Completo *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editStudentNombreCompleto}
+                  onChange={(e) => setEditStudentNombreCompleto(e.target.value)}
+                  placeholder="Ej: Juan Pérez"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setEditingStudent(null)} 
+                  className="btn btn-secondary"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                >
+                  Guardar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Interactive Onboarding Tour */}
       <InteractiveTour 
-        steps={adminTourSteps} 
+        steps={visibleTourSteps} 
         onComplete={handleTourComplete} 
         isOpen={isTourOpen} 
       />
