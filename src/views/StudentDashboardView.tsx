@@ -26,7 +26,8 @@ import {
   TrendingUp,
   Flame,
   Zap,
-  Compass
+  Compass,
+  Edit
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -34,14 +35,19 @@ import html2canvas from 'html2canvas';
 interface StudentDashboardViewProps {
   currentUser: Usuario;
   onLogout: () => void;
+  onUpdateUser: (updatedUser: Usuario) => void;
 }
 
-export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({ currentUser, onLogout }) => {
+export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({ currentUser, onLogout, onUpdateUser }) => {
   // DB States
   const [grupo, setGrupo] = useState<Grupo | null>(null);
   const [colegio, setColegio] = useState<Colegio | null>(null);
   const [simulacros, setSimulacros] = useState<Simulacro[]>([]);
   const [resultados, setResultados] = useState<Resultado[]>([]);
+
+  // Edit Profile States
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [editNombreCompleto, setEditNombreCompleto] = useState('');
 
   // Active Exam wizard States
   const [activeSimulacro, setActiveSimulacro] = useState<Simulacro | null>(null);
@@ -129,6 +135,24 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({ curr
   const [viewingResultadoSimId, setViewingResultadoSimId] = useState<string | null>(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [showDetailedReview, setShowDetailedReview] = useState(false);
+
+  const handleOpenEditProfile = () => {
+    setEditNombreCompleto(currentUser.nombre_completo || '');
+    setShowEditProfileModal(true);
+  };
+
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const updated = dbClient.updateUsuarioNombre(currentUser.id, editNombreCompleto);
+      dbClient.syncToIndexedDb().catch(err => console.error('IndexedDB sync failed:', err));
+      onUpdateUser(updated);
+      setShowEditProfileModal(false);
+      alert('Nombre actualizado con éxito.');
+    } catch (err: any) {
+      alert(`Error al actualizar el nombre: ${err.message}`);
+    }
+  };
 
   const handleJoinDemoGroup = () => {
     try {
@@ -1056,11 +1080,23 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({ curr
           <div className="student-header" style={{ padding: '1rem 3rem', backgroundColor: 'var(--bg-card)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <div className="user-avatar" style={{ backgroundColor: 'var(--bg-orange-light)', color: 'var(--color-primary)', fontWeight: 'bold' }}>
-                {currentUser.email.substring(0, 2).toUpperCase()}
+                {(currentUser.nombre_completo || currentUser.email).substring(0, 2).toUpperCase()}
               </div>
               <div>
-                <h2 style={{ fontSize: '1.2rem', margin: 0, fontWeight: 700, color: 'var(--text-title)' }}>{currentUser.email}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <h2 style={{ fontSize: '1.2rem', margin: 0, fontWeight: 700, color: 'var(--text-title)' }}>
+                    {currentUser.nombre_completo || currentUser.email}
+                  </h2>
+                  <button 
+                    onClick={handleOpenEditProfile}
+                    style={{ background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0.2rem' }}
+                    title="Editar Nombre"
+                  >
+                    <Edit size={14} />
+                  </button>
+                </div>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: 0 }}>
+                  {currentUser.nombre_completo ? `${currentUser.email} • ` : ''}
                   {colegio ? `${colegio.nombre} | ${grupo?.nombre_grupo || 'Sin Grupo'}` : 'Estudiante sin Institución'}
                 </p>
               </div>
@@ -1371,6 +1407,54 @@ export const StudentDashboardView: React.FC<StudentDashboardViewProps> = ({ curr
 
           </div>
         </>
+      )}
+
+      {/* Modal: Editar Perfil (Nombre del Estudiante) */}
+      {showEditProfileModal && (
+        <div className="modal-overlay" style={{ zIndex: 1000 }}>
+          <div className="modal-content" style={{ maxWidth: '400px', width: '90%' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '1rem', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0 }}>Editar Perfil</h3>
+              <button 
+                onClick={() => setShowEditProfileModal(false)} 
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.25rem', color: 'var(--text-muted)' }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label">Nombre Completo *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={editNombreCompleto}
+                  onChange={(e) => setEditNombreCompleto(e.target.value)}
+                  placeholder="Ej: Juan Pérez"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div className="modal-footer" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setShowEditProfileModal(false)} 
+                  className="btn btn-secondary"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary"
+                >
+                  Guardar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Interactive Onboarding Tour */}
