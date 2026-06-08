@@ -4,11 +4,11 @@ import type { Usuario } from './lib/types';
 import { LoginView } from './views/LoginView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { StudentDashboardView } from './views/StudentDashboardView';
-import { GraduationCap, Database, RefreshCw, Sun, Moon } from 'lucide-react';
+import { GraduationCap, RefreshCw, Sun, Moon } from 'lucide-react';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<Usuario | null>(null);
-  const [dbStatus, setDbStatus] = useState<string>('Inicializando...');
+
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('theme') === 'dark';
   });
@@ -27,11 +27,7 @@ function App() {
   useEffect(() => {
     try {
       dbClient.initializeAsync()
-        .then(() => {
-          setDbStatus('Base de Datos Conectada (Híbrida IndexedDB)');
-        })
         .catch((err) => {
-          setDbStatus('Error de Base de Datos');
           console.error(err);
         });
       
@@ -47,7 +43,6 @@ function App() {
         }
       }
     } catch (err: any) {
-      setDbStatus('Error de Base de Datos');
       console.error(err);
     }
   }, []);
@@ -92,13 +87,8 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <GraduationCap size={24} style={{ color: 'var(--color-primary)' }} />
           <span style={{ fontWeight: 800, fontSize: '1.05rem', letterSpacing: '-0.02em', color: '#ffffff' }}>
-            SABER-PRO <span style={{ fontWeight: 400, fontSize: '0.85rem', opacity: 0.8 }}>Jaime Colombia</span>
+            SABER-PRO
           </span>
-          <span style={{ opacity: 0.3 }}>|</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', opacity: 0.8, fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
-            <Database size={12} />
-            <span>{dbStatus}</span>
-          </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
@@ -167,7 +157,7 @@ function App() {
         ) : currentUser.rol === 'admin' || currentUser.rol === 'docente' ? (
           <AdminDashboardView currentUser={currentUser} onLogout={handleLogout} />
         ) : (
-          <StudentDashboardView currentUser={currentUser} onLogout={handleLogout} />
+          <StudentDashboardView currentUser={currentUser} onLogout={handleLogout} onUpdateUser={setCurrentUser} />
         )}
       </div>
     </div>
